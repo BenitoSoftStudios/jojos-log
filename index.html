@@ -198,7 +198,7 @@ const FIREBASE_CONFIG = {
   apiKey:            "AIzaSyDPT4yIBO1DCWVLnkkmM20YHT9VhgVh0OM",
   authDomain:        "jojos-log.firebaseapp.com",
   projectId:         "jojos-log",
-  storageBucket:     "jojos-log.appspot.com",
+  storageBucket:     "jojos-log.firebasestorage.app",
   messagingSenderId: "515486068673",
   appId:             "1:515486068673:web:79c1890dc7fba2defa4940"
 };
@@ -485,10 +485,12 @@ const isInc = f => (f.ml===''||f.ml==null) || (f.diaper===''||f.diaper==null);
 const fmtD = ds => new Date(ds+"T12:00:00").toLocaleDateString("en-CA",{weekday:"short",month:"short",day:"numeric"});
 function weekOf(ds){ const d=new Date(ds+"T12:00:00"),day=d.getDay()||7; d.setDate(d.getDate()-(day-1)); return d.toISOString().slice(0,10); }
 const wkLbl = ds => "Week of "+new Date(ds+"T12:00:00").toLocaleDateString("en-CA",{month:"short",day:"numeric"});
+// Stable seed ID — derived from date+time, never random, safe to re-check/re-upload
+function seedId(date,time){ return 's_'+date.replace(/-/g,'')+'_'+time.replace(':',''); }
 function seedToFeeds(){
   return SEED
     .filter(r => r[1] && !(r[1]==='00:00' && r[2]==='' && r[3]==='' && r[4]===''))
-    .map(r => ({id:mid(),date:r[0],time:r[1],ml:r[2]===''?'':+r[2],diaper:r[3],notes:r[4]||'',vitd:r[5]||0}));
+    .map(r => ({id:seedId(r[0],r[1]),date:r[0],time:r[1],ml:r[2]===''?'':+r[2],diaper:r[3],notes:r[4]||'',vitd:r[5]||0}));
 }
 
 // ── FIREBASE INIT ──
@@ -515,12 +517,14 @@ async function initApp() {
     try { await db.enablePersistence(); } catch(e) { /* multi-tab mode, fine */ }
     COLL = db.collection('feeds');
 
-    // Check if Firestore is empty → seed it with historical data
-    const snap = await COLL.limit(1).get();
-    if (snap.empty) {
+    // Check if seed history is present by looking for a specific known first entry.
+    // Using a stable known doc ID means this is safe to re-run — set() is idempotent.
+    const firstSeedDoc = await COLL.doc('s_20260323_0230').get();
+    if (!firstSeedDoc.exists) {
       setSyncStatus('wait');
+      document.getElementById('app').innerHTML='<div class="loading"><span class="duck">🦆</span>Uploading Jojo\'s history…</div>';
       const seedData = seedToFeeds();
-      // Upload in batches of 400 (Firestore limit is 500)
+      // Upload in batches of 400 (Firestore max is 500 per batch)
       for (let i=0; i < seedData.length; i += 400) {
         const batch = db.batch();
         seedData.slice(i, i+400).forEach(f => batch.set(COLL.doc(f.id), f));
