@@ -517,10 +517,13 @@ async function initApp() {
     try { await db.enablePersistence(); } catch(e) { /* multi-tab mode, fine */ }
     COLL = db.collection('feeds');
 
-    // Check if seed history is present by looking for a specific known first entry.
-    // Using a stable known doc ID means this is safe to re-run — set() is idempotent.
-    const firstSeedDoc = await COLL.doc('s_20260323_0230').get();
-    if (!firstSeedDoc.exists) {
+    // Check if Firestore already has data.
+    // - If 0 docs: fresh DB, upload seed with stable IDs
+    // - If ≥1 doc: data already exists (from any version), skip seeding entirely
+    // - If stable seed doc exists specifically: also skip (clean re-deploy scenario)
+    const anySnap = await COLL.limit(1).get();
+    const stableSnap = await COLL.doc('s_20260323_0230').get();
+    if (anySnap.empty && !stableSnap.exists) {
       setSyncStatus('wait');
       document.getElementById('app').innerHTML='<div class="loading"><span class="duck">🦆</span>Uploading Jojo\'s history…</div>';
       const seedData = seedToFeeds();
