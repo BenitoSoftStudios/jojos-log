@@ -536,8 +536,9 @@ async function initApp() {
     }
 
     // Real-time listener — this is the source of truth for both devices
-    COLL.orderBy('date').orderBy('time').onSnapshot(snapshot => {
+      COLL.onSnapshot(snapshot => {
       feeds = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+      feeds.sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
       setSyncStatus('ok');
       if (gvis) renderGraph(); else render();
     }, err => {
