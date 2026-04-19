@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Jojo's Log 🦆</title>
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=Quicksand:wght@600;700&display=swap" rel="stylesheet">
+
+<!-- Firebase SDKs -->
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
 :root{
@@ -20,14 +25,24 @@ body{font-family:var(--f);background:var(--cream);color:var(--text);font-size:14
 .hdr-row{display:flex;align-items:center;justify-content:space-between;gap:6px;}
 .hdr-l{display:flex;align-items:center;gap:10px;}
 .hdr-title{font-family:var(--f2);font-size:19px;font-weight:700;line-height:1.2;}
-.hdr-sub{font-size:11px;color:var(--muted);margin-top:1px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;}
+.hdr-sub{font-size:11px;color:var(--muted);margin-top:1px;display:flex;align-items:center;gap:5px;flex-wrap:wrap;}
 .clk{font-family:var(--f2);font-size:11px;color:var(--grn);font-weight:700;}
+.sync-dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0;}
+.sync-dot.ok{background:#7DBFA5;}
+.sync-dot.wait{background:#F59E0B;}
+.sync-dot.err{background:#E87070;}
+.sync-lbl{font-size:10px;font-weight:600;}
 .hdr-btns{display:flex;gap:5px;flex-shrink:0;}
 .btn{border:none;border-radius:18px;padding:7px 11px;font-family:var(--f);font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;}
 .btn-sand{background:var(--sand);color:var(--text);border:1px solid var(--borderl);}
 .btn-grn{background:var(--grn);color:#fff;}
 .btn-pur{background:var(--lavender);color:#7A6AB0;border:1px solid rgba(180,160,212,0.4);}
 .btn-pur.on{background:var(--pur);color:#fff;border-color:var(--pur);}
+
+/* LOADING */
+.loading{padding:40px 20px;text-align:center;color:var(--muted);font-size:14px;}
+.loading .duck{font-size:32px;display:block;margin-bottom:12px;animation:bob 1.2s ease-in-out infinite;}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
 
 /* STATS */
 .stats{display:flex;gap:7px;padding:9px 14px;background:#fff;border-bottom:1px solid var(--border);overflow-x:auto;scrollbar-width:none;}
@@ -128,6 +143,9 @@ body{font-family:var(--f);background:var(--cream);color:var(--text);font-size:14
           <span id="hdate"></span>
           <span style="color:#ccc">·</span>
           <span class="clk" id="hclk"></span>
+          <span style="color:#ccc">·</span>
+          <span class="sync-dot wait" id="sdot"></span>
+          <span class="sync-lbl" id="slbl" style="color:var(--muted)">connecting</span>
         </div>
       </div>
     </div>
@@ -140,7 +158,7 @@ body{font-family:var(--f);background:var(--cream);color:var(--text);font-size:14
 </div>
 
 <div id="stats" class="stats"></div>
-<div id="app"></div>
+<div id="app"><div class="loading"><span class="duck">🦆</span>Loading Jojo's data…</div></div>
 <div id="gview"></div>
 
 <div class="ov" id="ov">
@@ -172,6 +190,20 @@ body{font-family:var(--f);background:var(--cream);color:var(--text);font-size:14
 </div>
 
 <script>
+// ═══════════════════════════════════════════════════════════
+//  FIREBASE CONFIG — paste your config here after setup
+//  See README.md for step-by-step instructions
+// ═══════════════════════════════════════════════════════════
+const FIREBASE_CONFIG = {
+  apiKey:            "PASTE_API_KEY",
+  authDomain:        "PASTE_PROJECT_ID.firebaseapp.com",
+  projectId:         "PASTE_PROJECT_ID",
+  storageBucket:     "PASTE_PROJECT_ID.appspot.com",
+  messagingSenderId: "PASTE_SENDER_ID",
+  appId:             "PASTE_APP_ID"
+};
+// ═══════════════════════════════════════════════════════════
+
 const SEED=[
 ["2026-03-23","02:30",40,"","",0],
 ["2026-03-23","03:45","","WP","",0],
@@ -445,54 +477,87 @@ const SEED=[
 ["2026-04-18","00:00","","","",0]
 ];
 
-const SK='jojo_v8';
-const pz=n=>String(n).padStart(2,'0');
-const mid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-
+// ── HELPERS ──
+const pz = n => String(n).padStart(2,'0');
+const mid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+function today(){ const n=new Date(); return n.getFullYear()+'-'+pz(n.getMonth()+1)+'-'+pz(n.getDate()); }
+const isInc = f => (f.ml===''||f.ml==null) || (f.diaper===''||f.diaper==null);
+const fmtD = ds => new Date(ds+"T12:00:00").toLocaleDateString("en-CA",{weekday:"short",month:"short",day:"numeric"});
+function weekOf(ds){ const d=new Date(ds+"T12:00:00"),day=d.getDay()||7; d.setDate(d.getDate()-(day-1)); return d.toISOString().slice(0,10); }
+const wkLbl = ds => "Week of "+new Date(ds+"T12:00:00").toLocaleDateString("en-CA",{month:"short",day:"numeric"});
 function seedToFeeds(){
-  return SEED.map(r=>({id:mid(),date:r[0],time:r[1],ml:r[2]===""?"":+r[2],diaper:r[3],notes:r[4]||"",vitd:r[5]||0}));
+  return SEED
+    .filter(r => r[1] && !(r[1]==='00:00' && r[2]==='' && r[3]==='' && r[4]===''))
+    .map(r => ({id:mid(),date:r[0],time:r[1],ml:r[2]===''?'':+r[2],diaper:r[3],notes:r[4]||'',vitd:r[5]||0}));
 }
-function load(){
-  try{
-    const r=localStorage.getItem(SK);
-    if(r){const p=JSON.parse(r);if(Array.isArray(p)&&p.length>0)return p;}
-    // migrate older keys
-    for(const ok of['jojo_v7','jojo_v6']){
-      const o=localStorage.getItem(ok);
-      if(o){
-        const p=JSON.parse(o);
-        if(Array.isArray(p)&&p.length>0){
-          const vm={};SEED.forEach(r=>{if(r[5])vm[r[0]+'|'+r[1]]=1;});
-          const m=p.map(f=>({...f,vitd:f.vitd!=null?f.vitd:(vm[f.date+'|'+f.time]||0)}));
-          save(m);return m;
-        }
+
+// ── FIREBASE INIT ──
+let db, COLL;
+let feeds = [];
+let gvis = false;
+const CS = {M:{},W:{},D:{}};
+let booted = false;
+
+function setSyncStatus(state) {
+  const dot = document.getElementById('sdot');
+  const lbl = document.getElementById('slbl');
+  if (!dot||!lbl) return;
+  dot.className = 'sync-dot ' + (state==='ok'?'ok':state==='err'?'err':'wait');
+  lbl.textContent = state==='ok'?'synced':state==='err'?'offline':'syncing…';
+  lbl.style.color = state==='ok'?'var(--grn)':state==='err'?'#E87070':'var(--sun)';
+}
+
+async function initApp() {
+  try {
+    firebase.initializeApp(FIREBASE_CONFIG);
+    db = firebase.firestore();
+    // Enable offline persistence so the app works without internet too
+    try { await db.enablePersistence(); } catch(e) { /* multi-tab mode, fine */ }
+    COLL = db.collection('feeds');
+
+    // Check if Firestore is empty → seed it with historical data
+    const snap = await COLL.limit(1).get();
+    if (snap.empty) {
+      setSyncStatus('wait');
+      const seedData = seedToFeeds();
+      // Upload in batches of 400 (Firestore limit is 500)
+      for (let i=0; i < seedData.length; i += 400) {
+        const batch = db.batch();
+        seedData.slice(i, i+400).forEach(f => batch.set(COLL.doc(f.id), f));
+        await batch.commit();
       }
     }
-  }catch(e){}
-  const d=seedToFeeds();save(d);return d;
+
+    // Real-time listener — this is the source of truth for both devices
+    COLL.orderBy('date').orderBy('time').onSnapshot(snapshot => {
+      feeds = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+      setSyncStatus('ok');
+      if (gvis) renderGraph(); else render();
+    }, err => {
+      console.error('Firestore error:', err);
+      setSyncStatus('err');
+    });
+
+  } catch(err) {
+    console.error('Firebase init failed:', err);
+    setSyncStatus('err');
+    // Fallback to local seed so the app still works
+    feeds = seedToFeeds();
+    render();
+  }
 }
-function save(d){try{localStorage.setItem(SK,JSON.stringify(d));}catch(e){}}
 
-let feeds=load();
-
-// Clock
+// ── CLOCK ──
 function tick(){
   const n=new Date();
   const ds=n.toLocaleDateString('en-CA',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
   const ts=pz(n.getHours())+':'+pz(n.getMinutes())+':'+pz(n.getSeconds());
   const de=document.getElementById('hdate'),ce=document.getElementById('hclk');
-  if(de)de.textContent=ds;if(ce)ce.textContent=ts;
+  if(de)de.textContent=ds; if(ce)ce.textContent=ts;
 }
-tick();setInterval(tick,1000);
+tick(); setInterval(tick,1000);
 
-// Utils
-const isInc=f=>(f.ml===""||f.ml==null)||(f.diaper===""||f.diaper==null);
-const fmtD=ds=>new Date(ds+"T12:00:00").toLocaleDateString("en-CA",{weekday:"short",month:"short",day:"numeric"});
-function weekOf(ds){const d=new Date(ds+"T12:00:00"),day=d.getDay()||7;d.setDate(d.getDate()-(day-1));return d.toISOString().slice(0,10);}
-const wkLbl=ds=>"Week of "+new Date(ds+"T12:00:00").toLocaleDateString("en-CA",{month:"short",day:"numeric"});
-function today(){const n=new Date();return n.getFullYear()+'-'+pz(n.getMonth()+1)+'-'+pz(n.getDate());}
-
-// Group feeds into month->week->day
+// ── GROUP ──
 function group(){
   const M={};
   feeds.forEach(f=>{
@@ -512,11 +577,9 @@ function group(){
   return M;
 }
 
-// Collapse state
-const CS={M:{},W:{},D:{}};
-let booted=false;
+// ── COLLAPSE STATE ──
 function initCS(M){
-  if(booted)return;booted=true;
+  if(booted)return; booted=true;
   const sm=Object.keys(M).sort(),lm=sm[sm.length-1];
   sm.forEach(k=>{CS.M[k]=k===lm;});
   const sw=Object.keys(M[lm].weeks).sort(),lw=sw[sw.length-1];
@@ -525,12 +588,12 @@ function initCS(M){
   Object.values(M).forEach(m=>Object.values(m.weeks).forEach(w=>Object.keys(w.days).forEach(k=>{CS.D[k]=k===ld;})));
 }
 
-// Stats bar
+// ── STATS ──
 function renderStats(){
   const td=today();
   const tf=feeds.filter(f=>f.date===td);
   const tml=tf.reduce((s,f)=>s+(+f.ml||0),0);
-  const d7=new Date();d7.setDate(d7.getDate()-6);
+  const d7=new Date(); d7.setDate(d7.getDate()-6);
   const w7=d7.getFullYear()+'-'+pz(d7.getMonth()+1)+'-'+pz(d7.getDate());
   const w7ml=feeds.filter(f=>f.date>=w7).reduce((s,f)=>s+(+f.ml||0),0);
   const cm=td.slice(0,7),moml=feeds.filter(f=>f.date.startsWith(cm)).reduce((s,f)=>s+(+f.ml||0),0);
@@ -541,13 +604,13 @@ function renderStats(){
     '<div class="pill">Feeds today <b>'+tf.length+'</b></div>';
 }
 
-// Sun SVG icon
+// ── SUN ICON ──
 const SUN='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.9" y1="4.9" x2="7.1" y2="7.1"/><line x1="16.9" y1="16.9" x2="19.1" y2="19.1"/><line x1="19.1" y1="4.9" x2="16.9" y2="7.1"/><line x1="7.1" y1="16.9" x2="4.9" y2="19.1"/></svg>';
 
-// Render log view
+// ── RENDER ──
 function render(){
   renderStats();
-  const M=group();initCS(M);
+  const M=group(); initCS(M);
   let h='';
   Object.keys(M).sort().forEach(mk=>{
     const mo=M[mk],op=CS.M[mk]!==false;
@@ -573,7 +636,7 @@ function render(){
             '<th class="th-dp">Diaper</th><th class="th-vd" title="Vitamin D">&#9728;D</th>'+
             '<th>Notes</th><th class="th-x"></th></tr></thead><tbody>';
           sf.forEach(f=>{
-            const me=f.ml===""||f.ml==null,de=f.diaper===""||f.diaper==null;
+            const me=f.ml===''||f.ml==null,de=f.diaper===''||f.diaper==null;
             const sn=(f.notes||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
             h+='<tr class="fr'+(me||de?' inc':'')+'" id="r'+f.id+'">'+
               '<td><input class="i-time" type="time" step="60" value="'+(f.time||'')+'" onchange="upd(\''+f.id+'\',\'time\',this.value)"></td>'+
@@ -600,9 +663,18 @@ function render(){
   document.getElementById('app').innerHTML=h;
 }
 
-// Mutations
-function tog(t,k){CS[t][k]=!CS[t][k];render();}
-function upd(id,f,v){const i=feeds.findIndex(x=>x.id===id);if(i>=0){feeds[i][f]=v;save(feeds);}renderStats();}
+// ── COLLAPSE ──
+function tog(t,k){ CS[t][k]=!CS[t][k]; render(); }
+
+// ── MUTATIONS (write to Firestore; onSnapshot re-renders both devices) ──
+function upd(id,field,val){
+  // Optimistic local update
+  const i=feeds.findIndex(x=>x.id===id);
+  if(i>=0){ feeds[i][field]=val; renderStats(); }
+  // Persist to Firestore
+  if(COLL) COLL.doc(id).update({[field]:val}).catch(e=>console.error('upd:',e));
+}
+
 function updML(id,inp){
   const v=inp.value===''?'':+inp.value;
   inp.classList.toggle('em',inp.value==='');
@@ -610,6 +682,7 @@ function updML(id,inp){
   const f=feeds.find(x=>x.id===id),row=document.getElementById('r'+id);
   if(f&&row)row.classList.toggle('inc',isInc(f));
 }
+
 function setD(id,val,btn){
   const row=document.getElementById('r'+id);
   if(row)row.querySelectorAll('.db').forEach(b=>b.className='db');
@@ -618,14 +691,22 @@ function setD(id,val,btn){
   const f=feeds.find(x=>x.id===id),row2=document.getElementById('r'+id);
   if(f&&row2)row2.classList.toggle('inc',isInc(f));
 }
-function togVitD(id){
-  const i=feeds.findIndex(x=>x.id===id);if(i<0)return;
-  feeds[i].vitd=feeds[i].vitd?0:1;save(feeds);
-  const b=document.getElementById('v'+id);if(b)b.className='vdb'+(feeds[i].vitd?' on':'');
-}
-function delF(id){if(!confirm('Delete this entry?'))return;feeds=feeds.filter(f=>f.id!==id);save(feeds);render();}
 
-// Modal
+function togVitD(id){
+  const i=feeds.findIndex(x=>x.id===id); if(i<0)return;
+  feeds[i].vitd=feeds[i].vitd?0:1;
+  const btn=document.getElementById('v'+id);
+  if(btn)btn.className='vdb'+(feeds[i].vitd?' on':'');
+  if(COLL) COLL.doc(id).update({vitd:feeds[i].vitd}).catch(e=>console.error('vitd:',e));
+}
+
+function delF(id){
+  if(!confirm('Delete this entry?'))return;
+  feeds=feeds.filter(f=>f.id!==id); render();
+  if(COLL) COLL.doc(id).delete().catch(e=>console.error('del:',e));
+}
+
+// ── MODAL ──
 function pickD(v){
   document.querySelectorAll('.dopt').forEach(e=>e.className='dopt'+(e.dataset.v===v?' s'+v:''));
   document.getElementById('mdp').value=v;
@@ -638,7 +719,7 @@ function openFeedModal(dk){
   let t='';
   if(sf.length&&sf[sf.length-1].time){
     const[h,m]=sf[sf.length-1].time.split(':').map(Number);
-    const nx=new Date(2000,0,1,h,m);nx.setMinutes(nx.getMinutes()+180);
+    const nx=new Date(2000,0,1,h,m); nx.setMinutes(nx.getMinutes()+180);
     t=pz(nx.getHours())+':'+pz(nx.getMinutes());
   }
   document.getElementById('mtime').value=t;
@@ -653,7 +734,7 @@ function openDayModal(){
   document.getElementById('mdr').style.display='';
   const dates=feeds.map(f=>f.date).sort();
   const last=dates[dates.length-1]||today();
-  const nx=new Date(last+'T12:00:00');nx.setDate(nx.getDate()+1);
+  const nx=new Date(last+'T12:00:00'); nx.setDate(nx.getDate()+1);
   document.getElementById('mdate').value=nx.toISOString().slice(0,10);
   document.getElementById('mtime').value='';
   document.getElementById('mml').value='';
@@ -662,8 +743,9 @@ function openDayModal(){
   document.getElementById('mdp').value='';
   document.getElementById('ov').classList.add('open');
 }
-function closeModal(){document.getElementById('ov').classList.remove('open');}
-document.getElementById('ov').addEventListener('click',e=>{if(e.target===document.getElementById('ov'))closeModal();});
+function closeModal(){ document.getElementById('ov').classList.remove('open'); }
+document.getElementById('ov').addEventListener('click',e=>{ if(e.target===document.getElementById('ov'))closeModal(); });
+
 function saveModal(){
   const date=document.getElementById('mdate').value;
   const time=document.getElementById('mtime').value;
@@ -673,28 +755,30 @@ function saveModal(){
   if(!date){alert('Date required.');return;}
   if(!time){alert('Time required.');return;}
   const ml=mlr===''?'':+mlr;
-  feeds.push({id:mid(),date,time,ml,diaper:dp,notes,vitd:0});
+  const feed={id:mid(),date,time,ml,diaper:dp,notes,vitd:0};
+  // Optimistic local add
+  feeds.push(feed);
   feeds.sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
-  save(feeds);
-  CS.M[date.slice(0,7)]=true;CS.W[weekOf(date)]=true;CS.D[date]=true;
+  CS.M[date.slice(0,7)]=true; CS.W[weekOf(date)]=true; CS.D[date]=true;
   closeModal();
-  if(gvis)renderGraph();else render();
+  if(gvis)renderGraph(); else render();
+  // Persist to Firestore
+  if(COLL) COLL.doc(feed.id).set(feed).catch(e=>console.error('add:',e));
 }
 
-// CSV export
+// ── CSV EXPORT ──
 function exportCSV(){
   const hdr='Date,Time,Amount (mL),Diaper,VitaminD,Notes';
   const rows=feeds.slice().sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)).map(f=>{
     const n=(f.notes||'').replace(/"/g,'""');
     return f.date+','+f.time+','+(f.ml===''?'':f.ml)+','+(f.diaper||'')+(f.vitd?',yes':',')+',"'+n+'"';
   });
-  const blob=new Blob([[hdr,...rows].join('\n'),{type:'text/csv'}]);
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
-  a.download='jojos-log-'+today()+'.csv';a.click();
+  const blob=new Blob([[hdr,...rows].join('\n')],{type:'text/csv'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download='jojos-log-'+today()+'.csv'; a.click();
 }
 
-// ── GRAPH VIEW ──
-let gvis=false;
+// ── GRAPH ──
 function toggleGraph(){
   gvis=!gvis;
   document.getElementById('app').style.display=gvis?'none':'';
@@ -703,50 +787,24 @@ function toggleGraph(){
   if(gvis)renderGraph();
 }
 
-// Build one SVG bar chart
-// days = [{val, lbl, isToday}], all N bars always drawn, bottom-aligned on shared baseline
-function makeBars(days, barClr, todayClr){
-  const N=days.length;
-  if(!N)return'';
-  const BW=Math.max(Math.floor(320/N),5); // bar width px
-  const GAP=1;
-  const W=N*(BW+GAP)+4;
-  const CHART_H=130;  // height of bar area
-  const LABEL_H=20;   // x-axis labels
-  const VAL_H=16;     // value labels above bars
-  const TOT_H=CHART_H+LABEL_H+VAL_H;
-  const BASE_Y=VAL_H+CHART_H; // y of baseline
-
+function makeBars(days,barClr,todayClr){
+  const N=days.length; if(!N)return'';
+  const BW=Math.max(Math.floor(320/N),5),GAP=1;
+  const W=N*(BW+GAP)+4,CHART_H=130,LABEL_H=20,VAL_H=16;
+  const TOT_H=CHART_H+LABEL_H+VAL_H,BASE_Y=VAL_H+CHART_H;
   const maxVal=Math.max(...days.map(d=>d.val),1);
-
   let s='<svg width="'+W+'" height="'+TOT_H+'" viewBox="0 0 '+W+' '+TOT_H+'" xmlns="http://www.w3.org/2000/svg" style="display:block;">';
-  // baseline
   s+='<line x1="0" y1="'+BASE_Y+'" x2="'+W+'" y2="'+BASE_Y+'" stroke="#DDD6CE" stroke-width="1"/>';
-
   days.forEach((d,i)=>{
-    const x=2+i*(BW+GAP);
-    const cx=x+BW/2;
+    const x=2+i*(BW+GAP),cx=x+BW/2;
     const barH=d.val>0?Math.max(Math.round((d.val/maxVal)*CHART_H),3):0;
-    const barY=BASE_Y-barH;
-    const clr=d.isToday?todayClr:barClr;
-
-    // bar
-    if(barH>0){
-      s+='<rect x="'+x+'" y="'+barY+'" width="'+BW+'" height="'+barH+'" rx="2" fill="'+clr+'"/>';
-    } else {
-      // zero = tiny tick on baseline
-      s+='<rect x="'+x+'" y="'+(BASE_Y-2)+'" width="'+BW+'" height="2" rx="1" fill="#E0D8D0"/>';
-    }
-    // value label — only show for bars with data, keep sparse to avoid clutter
-    if(d.val>0&&d.lbl){
-      s+='<text x="'+cx+'" y="'+(barY-3)+'" text-anchor="middle" font-size="8" fill="#9A8F89" font-family="Nunito,sans-serif">'+Math.round(d.val)+'</text>';
-    }
-    // x-axis label
+    const barY=BASE_Y-barH,clr=d.isToday?todayClr:barClr;
+    if(barH>0){ s+='<rect x="'+x+'" y="'+barY+'" width="'+BW+'" height="'+barH+'" rx="2" fill="'+clr+'"/>'; }
+    else { s+='<rect x="'+x+'" y="'+(BASE_Y-2)+'" width="'+BW+'" height="2" rx="1" fill="#E0D8D0"/>'; }
+    if(d.val>0&&d.lbl){ s+='<text x="'+cx+'" y="'+(barY-3)+'" text-anchor="middle" font-size="8" fill="#9A8F89" font-family="Nunito,sans-serif">'+Math.round(d.val)+'</text>'; }
     if(d.lbl){
-      const ly=BASE_Y+13;
-      const fc=d.isToday?todayClr:'#9A8F89';
-      const fw=d.isToday?'700':'400';
-      s+='<text x="'+cx+'" y="'+ly+'" text-anchor="middle" font-size="9" fill="'+fc+'" font-family="Nunito,sans-serif" font-weight="'+fw+'">'+d.lbl+'</text>';
+      const fc=d.isToday?todayClr:'#9A8F89',fw=d.isToday?'700':'400';
+      s+='<text x="'+cx+'" y="'+(BASE_Y+13)+'" text-anchor="middle" font-size="9" fill="'+fc+'" font-family="Nunito,sans-serif" font-weight="'+fw+'">'+d.lbl+'</text>';
     }
   });
   s+='</svg>';
@@ -755,60 +813,39 @@ function makeBars(days, barClr, todayClr){
 
 function renderGraph(){
   const td=today();
-  // daily totals
-  const DT={};
-  feeds.forEach(f=>{DT[f.date]=(DT[f.date]||0)+(+f.ml||0);});
-  // monthly totals
-  const MT={};
-  feeds.forEach(f=>{const mk=f.date.slice(0,7);MT[mk]=(MT[mk]||0)+(+f.ml||0);});
-
+  const DT={},MT={};
+  feeds.forEach(f=>{ DT[f.date]=(DT[f.date]||0)+(+f.ml||0); const mk=f.date.slice(0,7); MT[mk]=(MT[mk]||0)+(+f.ml||0); });
   const months=Object.keys(MT).sort();
   let html='';
-
-  // Per-month daily charts
   months.forEach(mk=>{
     const d=new Date(mk+'-01T12:00:00');
     const mLabel=d.toLocaleDateString('en-CA',{month:'long',year:'numeric'});
-    const dim=new Date(d.getFullYear(),d.getMonth()+1,0).getDate(); // days in month
+    const dim=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
     const days=[];
     for(let i=1;i<=dim;i++){
-      const dk=mk+'-'+pz(i);
-      if(dk>td)break; // don't render future days
-      const val=DT[dk]||0;
-      const isToday=dk===td;
-      // Label: show day 1, every 5th day, and today
+      const dk=mk+'-'+pz(i); if(dk>td)break;
+      const val=DT[dk]||0,isToday=dk===td;
       const lbl=(i===1||i%5===0||isToday)?String(i):'';
       days.push({val,lbl,isToday});
     }
     if(!days.length)return;
     const tot=days.reduce((s,d)=>s+d.val,0);
-    html+='<div class="gsec">'+
-      '<div class="gtit">'+mLabel+' <span style="font-size:11px;color:var(--muted);font-weight:600;">'+tot.toLocaleString()+' mL</span></div>'+
-      '<div class="gchart">'+makeBars(days,'#7DBFA5','#E8A598')+'</div>'+
-      '</div>';
+    html+='<div class="gsec"><div class="gtit">'+mLabel+' <span style="font-size:11px;color:var(--muted);font-weight:600;">'+tot.toLocaleString()+' mL</span></div>'+
+      '<div class="gchart">'+makeBars(days,'#7DBFA5','#E8A598')+'</div></div>';
   });
-
-  // 2026 by-month — only months from March onward that have data
   const MN={'03':'Mar','04':'Apr','05':'May','06':'Jun','07':'Jul','08':'Aug','09':'Sep','10':'Oct','11':'Nov','12':'Dec'};
   const yr=months.filter(m=>m.startsWith('2026')&&m>='2026-03');
   if(yr.length){
     const tot2=yr.reduce((s,m)=>s+MT[m],0);
-    const mdays=yr.map(mk=>({
-      val:MT[mk]||0,
-      lbl:MN[mk.slice(5)]||mk.slice(5),
-      isToday:mk===td.slice(0,7)
-    }));
-    html+='<div class="gsec">'+
-      '<div class="gtit">2026 by month <span style="font-size:11px;color:var(--muted);font-weight:600;">'+tot2.toLocaleString()+' mL</span></div>'+
-      '<div class="gchart">'+makeBars(mdays,'#B4A0D4','#E8A598')+'</div>'+
-      '</div>';
+    const mdays=yr.map(mk=>({val:MT[mk]||0,lbl:MN[mk.slice(5)]||mk.slice(5),isToday:mk===td.slice(0,7)}));
+    html+='<div class="gsec"><div class="gtit">2026 by month <span style="font-size:11px;color:var(--muted);font-weight:600;">'+tot2.toLocaleString()+' mL</span></div>'+
+      '<div class="gchart">'+makeBars(mdays,'#B4A0D4','#E8A598')+'</div></div>';
   }
-
   document.getElementById('gview').innerHTML=html;
 }
 
-// Boot
-render();
+// ── BOOT ──
+initApp();
 </script>
 </body>
 </html>
